@@ -1,6 +1,8 @@
 ---
 title: "WK6 Detecting Spatial Patterns (Blue Plaques)"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 #### 这是一个R Markdown笔记本。在笔记本中执行代码时，结果会显示在代码下方。
@@ -134,7 +136,232 @@ BluePlaquesSub.ppp <- ppp(x=BluePlaquesSub@coords[,1],
                           y=BluePlaquesSub@coords[,2],
                           window=window)
 ```
+#### Try to understand what the different elements in command above is doing. If you are unsure, you can run elements of the code, for example: 
+```{r}
+BluePlaquesSub@coords[,1]
+```
+#### To plot the new ppp object
+```{r}
+BluePlaquesSub.ppp %>%
+  plot(.,pch=16,cex=0.5, 
+       main="Blue Plaques Harrow")
+```
 
+## 6.3. Point Pattern Analysis 
+### 6.3.1. Kernel Density Estimation
+```{r}
+BluePlaquesSub.ppp %>%
+  density(., sigma=500) %>%
+  plot()
+```
+####sigma是内核的直径，可以通过更改sigma更改核的大小
+```{r}
+BluePlaquesSub.ppp %>%
+  density(., sigma=1000) %>%
+  plot()
+```
+### 6.3.2 Quadrat Analysis 样方分析
+#### First plot the points
+```{R}
+plot(BluePlaquesSub.ppp,
+     pch=16,
+     cex=0.5, 
+     main="Blue Plaques in Harrow")
+# now count the points in that fall in a 6 x 6
+# grid overlaid across the windowBluePlaquesSub.ppp2<-BluePlaquesSub.ppp %>%
+BluePlaquesSub.ppp %>%
+  quadratcount(.,nx = 6, ny = 6)%>%
+    plot(., add=T, col="red")
+```
+### Using the same quadratcount() function again (for the same sized grid) we can save the results into a table 创建新table
+#### comparing our observed distribution of points with a statistically likely (Complete Spatial Random) distibution, based on the Poisson distribution 去看分布是否符合柏松分布看是否存在空间随机性
+```{r}
+#run the quadrat count
+Qcount <- BluePlaquesSub.ppp %>%
+  quadratcount(.,nx = 6, ny = 6) %>%
+  as.data.frame() %>%
+  dplyr::count(Var1=Freq)%>%
+  dplyr::rename(Freqquadratcount=n)
+```
+### Check the data type in the first column — if it is factor, we will need to convert it to numeric
+```{r}
+Qcount %>% 
+  summarise_all(class)
+```
+### 创建频率表后，我们要计算预期值根据课上的公式
+```{r}
+sums <- Qcount %>%
+  #calculate the total blue plaques (Var * Freq)
+  mutate(total = Var1 * Freqquadratcount) %>%
+  dplyr::summarise(across(everything(), sum))%>%
+  dplyr::select(-Var1) 
 
+lambda<- Qcount%>%
+  #calculate lambda
+  mutate(total = Var1 * Freqquadratcount)%>%
+  dplyr::summarise(across(everything(), sum)) %>%
+  mutate(lambda=total/Freqquadratcount) %>%
+  dplyr::select(lambda)%>%
+  pull(lambda)
+```
+### 
+```{r}
+QCountTable <- Qcount %>%
+  mutate(Pr=((lambda^Var1)*exp(-lambda))/factorial(Var1))%>%
+  #now calculate the expected counts based on our total number of plaques
+  #and save them to the table
+  mutate(Expected= (round(Pr * sums$Freqquadratcount, 0)))
 
+#Compare the frequency distributions of the observed and expected point patterns
+plot(c(1,5),c(0,14), type="n",
+xlab="Number of Blue Plaques (Red=Observed,Blue=Expected)", 
+     ylab="Frequency of Occurances")
+points(QCountTable$Freqquadratcount, 
+       col="Red", 
+       type="o", 
+       lwd=3)
+points(QCountTable$Expected, col="Blue", 
+       type="o", 
+       lwd=3)
+```
+#### uses a Chi Squared test to compare the observed and expected frequencies for each quadrant (rather 
+#### than for quadrant bins, as we have just computed above).
+#### 运用卡方检验比较每个象限里的预期值和观察值，卡方值越高差异越大
+#### 如果卡方檢驗的 p 值< 0.05，那麼我們可以拒絕“我們的數據中沒有模式，即完全的空間隨機性”的原假設
+```{r}
+teststats <- quadrat.test(BluePlaquesSub.ppp, nx = 6, ny = 6)
+# check the result (e.g., p-value)
+teststats
+#### 請注意警告消息 — 一些觀察到的計數非常小（0），這可能會影響象限測試的準確性。回想一下，泊松分佈僅描述以整數計數的觀測到的出現次數 — 其中出現次數 = 0（即未觀察到），這可能是一個問題。我們還知道，還有各種其他問題可能會影響我們的 quadrat 分析，例如 可修改的面積單位 問題 。
+```
+#### Plot the result of chi-squared test
+```{r}
+plot(BluePlaquesSub.ppp,pch=16,cex=0.5, main="Blue Plaques in Harrow")
+plot(teststats, add=T, col = "red")
+#在新繪圖中，我們可以看到每個象限有三個數位。左上角的數位是觀測到的點計數;右上角是泊松期望點數;底部值是殘差值（也稱為 Pearson 殘差值），或（觀測 - 預期）/ Sqrt（預期）。
+```
+
+### 6.3.3 Ripley’s K
+##### 解決樣方分析局限性的一種方法是將觀察到的點分佈與泊松隨機模型比較整個不同距離半徑範圍。這就是 Ripley 的 K 函數計算的內容。
+
+####我們可以使用該kest()函數的spatstat包非常簡單地對我們的數據進行 Ripley's K 檢驗。
+```{r}
+#### 计算
+K <- BluePlaquesSub.ppp %>%
+  Kest(., correction="border") %>%
+  plot()
+#### 把结果转换成data frame
+Kval <- as.data.frame(Kest(BluePlaquesSub.ppp, correction = "Ripley"))
+```
+#### Quadrat 和 Ripley's K ，可以告訴我們點數據中是否存在空間聚類，但它們無法告訴我們聚類在我們感興趣的區域中出現的位置。
+
+### 6.3.4 Density-based spatial clustering of applications with noise: DBSCAN
+
+#### DBSCAN 要求您輸入兩個參數： 1. Epsilon - 這是搜索集群的演算法在其內的半徑 2. MinPts - 這是應被視為集群的最小點數
+```{r}
+#import library
+#install.packages("fpc")
+library(fpc)
+#first check the coordinate reference system of the Harrow spatial polygon:
+st_geometry(BoroughMap)
+
+#first extract the points from the spatial points data frame
+BluePlaquesSubPoints <- BluePlaquesSub %>%
+  coordinates(.)%>%
+  as.data.frame()
+
+#now run the dbscan analysis
+db <- BluePlaquesSubPoints %>%
+  fpc::dbscan(.,eps = 700, MinPts = 4)
+
+#now plot the results
+plot(db, BluePlaquesSubPoints, main = "DBSCAN Output", frame = F)
+plot(BoroughMap$geometry, add=T)
+```
+####還可以使用 kNNdistplot() from the dbscan pacakge 根據圖中的“knee”找到合適的 eps 值
+```{r}
+# used to find suitable eps value based on the knee in plot
+# k is no of nearest neighbours used, use min points
+install.packages("dbscan")
+library(dbscan)
+BluePlaquesSubPoints%>%
+  dbscan::kNNdistplot(.,k=4)
+```
+####把上面的结果生成更好看的图
+```{r}
+# import library
+library(ggplot2)
+#我們的新 db 物件包含大量資訊，包括每組點座標所屬的集群、點是種子點還是邊界點等。我們只需調用 Object 即可獲得 Summary
+db
+```
+```{r}
+#查看集群
+db$cluster
+```
+```{r}
+#將此集群成員資格資訊添加回我們的 DataFrame 中
+BluePlaquesSubPoints<- BluePlaquesSubPoints %>%
+  mutate(dbcluster=db$cluster)
+```
+```{r}
+#創建一些凸包多邊形來環繞集群中的點。
+chulls <- BluePlaquesSubPoints %>%
+  group_by(dbcluster) %>%
+  dplyr::mutate(hull = 1:n(),
+  hull = factor(hull, chull(coords.x1, coords.x2)))%>%
+  arrange(hull)
+
+#chulls2 <- ddply(BluePlaquesSubPoints, .(dbcluster), 
+              #  function(df) df[chull(df$coords.x1, df$coords.x2), ])
+```
+```{r}
+# 由於 0 實際上不是一個集群（它是不在集群中的所有點），因此請將其從 DataFrame 中刪除
+chulls <- chulls %>%
+  filter(dbcluster >=1)
+```
+```{r}
+# 從ggplot2我們的數據創建一個物件
+dbplot <- ggplot(data=BluePlaquesSubPoints, 
+                 aes(coords.x1,coords.x2, colour=dbcluster, fill=dbcluster)) 
+#add the points in
+dbplot <- dbplot + geom_point()
+#now the convex hulls
+dbplot <- dbplot + geom_polygon(data = chulls, 
+                                aes(coords.x1,coords.x2, group=dbcluster), 
+                                alpha = 0.5) 
+#now plot, setting the coordinates to scale correctly and as a black and white plot 
+#(just for the hell of it)...
+dbplot + theme_bw() + coord_equal()
+```
+```{r}
+###add a basemap
+##First get the bbox in lat long for Harrow
+HarrowWGSbb <- Harrow %>%
+  st_transform(., 4326)%>%
+  st_bbox()
+```
+```{r}
+#install.packages("OpenStreetMap")
+library(OpenStreetMap)
+
+basemap <- OpenStreetMap::openmap(c(51.5549876,-0.4040502),c(51.6405356,-0.2671315),
+                         zoom=NULL,
+                         "osm")
+
+  # convert the basemap to British National Grid
+basemap_bng <- openproj(basemap, projection="+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +nadgrids=OSTN15_NTv2_OSGBtoETRS.gsb +units=m +no_defs +type=crs")
+```
+```{r}
+#autoplot(basemap_bng) sometimes works
+autoplot.OpenStreetMap(basemap_bng)+ 
+  geom_point(data=BluePlaquesSubPoints, 
+             aes(coords.x1,coords.x2, 
+                 colour=dbcluster, 
+                 fill=dbcluster)) + 
+  geom_polygon(data = chulls, 
+               aes(coords.x1,coords.x2, 
+                   group=dbcluster,
+                   fill=dbcluster), 
+               alpha = 0.5)  
+```
 
