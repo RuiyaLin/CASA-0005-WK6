@@ -17,7 +17,7 @@ output:
 
 ## 6.1. Import libraries 
 ```{r}
-install.packages("spatstat")
+#install.packages("spatstat")
 library(spatstat)
 library(here)
 library(sp)
@@ -282,7 +282,7 @@ plot(BoroughMap$geometry, add=T)
 ```{r}
 # used to find suitable eps value based on the knee in plot
 # k is no of nearest neighbours used, use min points
-install.packages("dbscan")
+# install.packages("dbscan")
 library(dbscan)
 BluePlaquesSubPoints%>%
   dbscan::kNNdistplot(.,k=4)
